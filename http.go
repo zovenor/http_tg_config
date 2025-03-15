@@ -2,6 +2,7 @@ package http_tg_config
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/invopop/jsonschema"
@@ -12,7 +13,7 @@ type validator interface {
 }
 
 type updater[T any] interface {
-	Update(T)
+	Update(T) error
 }
 
 type Config[T any] interface {
@@ -64,13 +65,17 @@ func (s *configHandler[T]) serveConfig(w http.ResponseWriter, r *http.Request) {
 		w.Write(bytes)
 	case http.MethodPost:
 		decoder := json.NewDecoder(r.Body)
-		err := decoder.Decode(&s.cfg)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		var newCfg T
+		if err := decoder.Decode(newCfg); err != nil {
+			http.Error(w, fmt.Sprintf("failed to decode request body: %v", err), http.StatusBadRequest)
 			return
 		}
-		if err := s.cfg.Validate(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		if err := newCfg.Validate(); err != nil {
+			http.Error(w, fmt.Sprintf("failed to validate config: %v", err), http.StatusBadRequest)
+			return
+		}
+		if err := s.cfg.Update(newCfg); err != nil {
+			http.Error(w, fmt.Sprintf("failed to update config: %v", err), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
