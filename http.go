@@ -17,9 +17,14 @@ type updater[T any] interface {
 	Update(T) error
 }
 
+type creator[T any] interface {
+	CreateNew() T
+}
+
 type Config[T any] interface {
 	validator
 	updater[T]
+	creator[T]
 }
 
 type configHandler[T Config[T]] struct {
@@ -55,7 +60,7 @@ func (s *configHandler[T]) serveSchema(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		err := fmt.Errorf("failed to marshal schema: %w", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		slog.Warn(err.Error())
+		s.logger.Warn(err.Error())
 		return
 	}
 	w.Write(bytes)
@@ -68,29 +73,35 @@ func (s *configHandler[T]) serveConfig(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			err = fmt.Errorf("failed to marshal config: %w", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.logger.Warn(err.Error())
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 		w.Write(bytes)
+		s.logger.Info("config", "config", string(bytes))
 	case http.MethodPost:
 		decoder := json.NewDecoder(r.Body)
-		var newCfg T
+		newCfg := s.cfg.CreateNew()
 		if err := decoder.Decode(newCfg); err != nil {
 			err = fmt.Errorf("failed to decode request body: %w", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			s.logger.Warn(err.Error())
 			return
 		}
 		if err := newCfg.Validate(); err != nil {
 			err = fmt.Errorf("failed to validate request body: %w", err)
 			http.Error(w, err.Error(), http.StatusBadRequest)
+			s.logger.Warn(err.Error())
 			return
 		}
 		if err := s.cfg.Update(newCfg); err != nil {
 			err = fmt.Errorf("failed to update config: %w", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.logger.Warn(err.Error())
 			return
 		}
 		w.WriteHeader(http.StatusOK)
+		s.logger.Info("config", "config", s.cfg)
 	case http.MethodOptions:
 		return
 	default:
