@@ -3,6 +3,7 @@ package http_tg_config
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 
 	"github.com/invopop/jsonschema"
@@ -22,13 +23,18 @@ type Config[T any] interface {
 }
 
 type configHandler[T Config[T]] struct {
+	logger *slog.Logger
 	http.Handler
 	cfg T
 }
 
-func NewConfigHandler[T Config[T]](cfg T, parentMux *http.ServeMux) *configHandler[T] {
+func NewConfigHandler[T Config[T]](cfg T, parentMux *http.ServeMux, logger *slog.Logger) *configHandler[T] {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	s := &configHandler[T]{
-		cfg: cfg,
+		cfg:    cfg,
+		logger: logger,
 	}
 
 	mux := http.NewServeMux()
@@ -47,7 +53,9 @@ func (s *configHandler[T]) serveSchema(w http.ResponseWriter, _ *http.Request) {
 	schema := jsonschema.Reflect(s.cfg)
 	bytes, err := schema.MarshalJSON()
 	if err != nil {
+		err := fmt.Errorf("failed to marshal schema: %w", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Warn(err.Error())
 		return
 	}
 	w.Write(bytes)
@@ -58,6 +66,7 @@ func (s *configHandler[T]) serveConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		bytes, err := json.Marshal(s.cfg)
 		if err != nil {
+			err = fmt.Errorf("failed to marshal config: %w", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -67,15 +76,18 @@ func (s *configHandler[T]) serveConfig(w http.ResponseWriter, r *http.Request) {
 		decoder := json.NewDecoder(r.Body)
 		var newCfg T
 		if err := decoder.Decode(newCfg); err != nil {
-			http.Error(w, fmt.Sprintf("failed to decode request body: %v", err), http.StatusBadRequest)
+			err = fmt.Errorf("failed to decode request body: %w", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := newCfg.Validate(); err != nil {
-			http.Error(w, fmt.Sprintf("failed to validate config: %v", err), http.StatusBadRequest)
+			err = fmt.Errorf("failed to validate request body: %w", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		if err := s.cfg.Update(newCfg); err != nil {
-			http.Error(w, fmt.Sprintf("failed to update config: %v", err), http.StatusInternalServerError)
+			err = fmt.Errorf("failed to update config: %w", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
